@@ -15,14 +15,15 @@ from app.user.choices import UserStatusChoices
 from flask import render_template, abort, redirect, url_for, g, request, flash
 from flask.ext.login import login_required
 
-from sqlalchemy import desc, or_
+from sqlalchemy import desc, or_, and_
+from sqlalchemy.orm import aliased
 
 @app.route('/')
 @app.route('/thanks/')
 def thanks():
     suggested_users = None
     if g.user.is_anonymous():
-        thanks = Thank.query.join(User, 
+        thanks = Thank.query.join(User,
                                 (User.id == Thank.giver_id))\
                             .filter(Thank.status == ThankStatusChoices.PUBLIC,
                                     User.status != UserStatusChoices.DELETED)\
@@ -34,24 +35,45 @@ def thanks():
         # if thank received by user link is deleted ignore
         # if follow is deleted ignore
 
-        # thanks = Thank.query.join(User, 
-        #                         (User.id == Thank.giver_id))\
-        #                     .outerjoin(ThankReceivedByUser,
-        #                             (ThankReceivedByUser.thank_id == Thank.id))\
-        #                     .outerjoin(Follow, 
-        #                             (Follow.followed_id == ThankReceivedByUser.receiver_id))\
-        #                     .filter(Follow.followed_id == g.user.id)\
-        #                     .all()
+        giver = aliased(User, name='giver')
+        thanks = Thank.query\
+            .join(User, User.id == Thank.giver_id)\
+            .filter(
+                Thank.status == ThankStatusChoices.PRIVATE,
+                or_(Thank.receiver_users.contains(g.user),
+                  Thank.giver == g.user)
+                )\
+                    .union(
+                        Thank.query\
+                            .join(User, Thank.receiver_users)\
+                            .join(giver, Thank.giver_id == giver.id)\
+                            .filter(
+                              or_(
+                                and_(
+                                  Thank.status == ThankStatusChoices.PUBLIC,
+                                  giver.status != UserStatusChoices.DELETED,
+                                  #and thank.giver in g.user.following)
+                                  User.following.any(User.id == Thank.giver_id)
+                                  ),
+                                # or any(user in thank.receiver_users for user in g.user.following):
+                                User.following.any(Thank.receiver_users.any())
+                                )
+                              ))\
+                                  .order_by(desc(Thank.date_registered)).all()
 
-        thanks = []
-        for thank in Thank.query.order_by(desc(Thank.date_registered)).all():
-            if thank.status == ThankStatusChoices.PUBLIC:
-                if (thank.giver.status != UserStatusChoices.DELETED and thank.giver in g.user.following) \
-                    or any(user in thank.receiver_users for user in g.user.following):
+
+        # your code was
+        if 0:
+            thanks = []
+            for thank in Thank.query.order_by(desc(Thank.date_registered)).all():
+                if thank.status == ThankStatusChoices.PUBLIC:
+                    if (thank.giver.status != UserStatusChoices.DELETED and thank.giver in g.user.following) \
+                            or any(user in thank.receiver_users for user in g.user.following):
+                                thanks.append(thank)
+                if thank.status == ThankStatusChoices.PRIVATE:
+                    if g.user in thank.receiver_users or g.user == thank.giver:
                         thanks.append(thank)
-            if thank.status == ThankStatusChoices.PRIVATE:
-                if g.user in thank.receiver_users or g.user == thank.giver:
-                    thanks.append(thank)
+
 
     return render_template('thanks/thanks.html',
         suggested_users = suggested_users,
@@ -70,7 +92,7 @@ def thanks_give():
         status = ThankStatusChoices.PUBLIC
         if form.private.data == True:
             status = ThankStatusChoices.PRIVATE
-        thank = Thank(  giver_id = g.user.id, 
+        thank = Thank(  giver_id = g.user.id,
                         message = form.message.data,
                         message_language = message_language,
                         media_id = media,
@@ -84,7 +106,7 @@ def thanks_give():
                 db.session.add(trbe)
                 db.session.commit()
                 if email.user != None and email.is_verified():
-                    trbu = ThankReceivedByUser( thank_id = thank.id, 
+                    trbu = ThankReceivedByUser( thank_id = thank.id,
                                                 receiver_id = email.user_id)
                     db.session.add(trbu)
                     db.session.commit()
