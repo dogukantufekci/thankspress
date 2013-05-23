@@ -131,7 +131,7 @@ class SettingsUserPasswordChangeForm(Form):
         if not rv:
             return False
 
-        if self.user.match_password(self.current_password.data):
+        if self.user.is_users_password(self.current_password.data):
             return True
         self.current_password.errors.append('Current Password field did not match with our records.')
         return False

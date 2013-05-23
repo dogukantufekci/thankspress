@@ -2,7 +2,6 @@ from flask import render_template
 from config import ADMINS
 from flask.ext.mail import Message
 from app import mail
-from threading import Thread
 from decorators import async
 
 @async
